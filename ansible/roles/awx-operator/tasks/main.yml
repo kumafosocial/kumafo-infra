@@ -1,0 +1,61 @@
+---
+# ansible/roles/awx-operator/tasks/main.yml
+
+- name: Ensure Helm repo for AWX Operator is added
+  community.kubernetes.helm_repository:
+    name: awx-operator
+    repo_url: https://ansible.github.io/awx-operator/
+    state: present
+
+- name: Install or upgrade AWX Operator
+  community.kubernetes.helm:
+    name: awx-operator
+    chart_ref: awx-operator/awx-operator
+    release_namespace: services
+    chart_version: ""        # omit for latest
+    create_namespace: false
+    values:
+      enableWebhook: false
+    state: present
+
+- name: Deploy AWX custom resource
+  community.kubernetes.k8s:
+    state: present
+    definition:
+      apiVersion: awx.ansible.com/v1beta1
+      kind: AWX
+      metadata:
+        name: awx
+        namespace: services
+      spec:
+        service_type: nodeport
+        ingress_type: none
+        nodeport_port: 32000
+        nodeport_tls_port: 32001
+        postgres_storage_size: 10Gi
+        web_extra_volume_mounts:
+          - name: playbooks
+            mountPath: /var/lib/awx/projects
+        web_extra_volumes:
+          - name: playbooks
+            configMap:
+              name: ansible-playbooks
+
+- name: Wait for AWX to be Available
+  community.kubernetes.k8s_info:
+    api_version: awx.ansible.com/v1beta1
+    kind: AWX
+    namespace: services
+    name: awx
+  register: awx_cr
+
+- name: Block until AWX reports Available
+  community.kubernetes.k8s_status:
+    api_version: awx.ansible.com/v1beta1
+    kind: AWX
+    name: awx
+    namespace: services
+    conditions:
+      - type: Available
+        status: "True"
+    timeout: 600
